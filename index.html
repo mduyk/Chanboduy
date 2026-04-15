@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DELTA RSL - SHOP 1</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    <style>
+        :root { --bg: #0d0d16; --card: #161625; --cyan: #00f2ff; --gold: #ffcc00; --red: #ff4444; --green: #00ff88; }
+        body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif; padding: 15px; margin: 0; }
+        .box { background: var(--card); padding: 20px; border-radius: 15px; border: 1px solid #333; margin-bottom: 20px; }
+        input { width: 100%; padding: 12px; margin: 8px 0; border-radius: 8px; border: 1px solid #444; background: #000; color: #fff; box-sizing: border-box; outline: none; }
+        button { border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; transition: 0.3s; }
+        .btn-main { background: var(--cyan); color: #000; }
+        .btn-nap { background: var(--gold); color: #000; margin-top: 10px; }
+        button:disabled { background: #333 !important; color: #666 !important; cursor: not-allowed; }
+        .balance { color: var(--gold); font-size: 24px; font-weight: bold; }
+        .hist-table { width: 100%; font-size: 12px; border-collapse: collapse; margin-top: 10px; }
+        .hist-table td { padding: 8px; border-bottom: 1px solid #222; }
+        .status-wait { color: var(--gold); }
+        .status-success { color: var(--green); }
+        .status-fail { color: var(--red); }
+        .qr-area { text-align: center; background: #000; padding: 15px; border-radius: 12px; margin: 15px 0; border: 1px solid var(--cyan); }
+    </style>
+</head>
+<body>
+
+<div style="max-width: 450px; margin: auto;">
+    <h2 style="text-align:center; color: var(--cyan);">DELTA RSL - SHOP 1</h2>
+
+    <div id="auth-area" class="box">
+        <input type="text" id="auth-user" placeholder="Tên tài khoản..." oninput="this.value = this.value.toLowerCase()">
+        <input type="password" id="auth-pass" placeholder="Mật khẩu...">
+        <button id="btn-login" class="btn-main" onclick="handleAuth('login')">ĐĂNG NHẬP</button>
+        <button id="btn-reg" onclick="handleAuth('register')" style="background:none; color:#888; margin-top:10px; font-size:12px">Chưa có tài khoản? Đăng ký ngay</button>
+        <p id="reg-msg" style="color:var(--red); font-size:11px; text-align:center; margin-top:10px; display:none;">Bạn đã tạo quá 3 Acc hôm nay. Quay lại vào ngày mai!</p>
+    </div>
+
+    <div id="user-area" class="box" style="display:none;">
+        <div style="display:flex; justify-content:space-between">
+            <span>Chào, <b id="display-name" style="color:var(--cyan)"></b></span>
+            <span onclick="logout()" style="color:#666; cursor:pointer; font-size:12px">[Thoát]</span>
+        </div>
+        <div style="margin: 15px 0;">Ví tiền: <span class="balance" id="user-balance">0</span> VNĐ</div>
+        
+        <div class="qr-area">
+            <small style="color:#888">Quét mã để nạp (Nội dung tự động)</small><br>
+            <img id="qr-img" src="" style="width: 180px; border-radius: 10px; margin: 10px 0;">
+            <div id="memo-txt" style="color:var(--gold); font-weight:bold; font-size:18px">NAP ...</div>
+        </div>
+
+        <input type="number" id="nap-amount" placeholder="Nhập số tiền đã bank...">
+        <button class="btn-nap" onclick="sendRequest()">XÁC NHẬN ĐÃ CHUYỂN TIỀN</button>
+        <p id="spam-msg" style="color:var(--red); font-size:11px; margin-top:5px; text-align:center; display:none;">CẢNH BÁO: Không spam lệnh ảo!</p>
+    </div>
+
+    <div class="box"><h3 style="color:var(--green)">GÓI NGÀY (20k)</h3><div id="list-ngay"></div></div>
+    <div class="box"><h3 style="color:var(--cyan)">GÓI TUẦN (40k)</h3><div id="list-tuan"></div></div>
+    <div class="box"><h3 style="color:#ff007b">GÓI THÁNG (80k)</h3><div id="list-thang"></div></div>
+
+    <div class="box">
+        <h3 style="color:var(--gold)">LỊCH SỬ NẠP TIỀN</h3>
+        <table class="hist-table"><tbody id="hist-pay"></tbody></table>
+    </div>
+
+    <div class="box">
+        <h3 style="color:var(--cyan)">KHO KEY ĐÃ MUA</h3>
+        <table class="hist-table"><tbody id="hist-key"></tbody></table>
+    </div>
+</div>
+
+<script>
+    const fbConfig = {
+        apiKey: "AIzaSyBk6R1TDZeAxh37JQLgL_6Wl0v8m8Sg0",
+        authDomain: "shopctv-61f96.firebaseapp.com",
+        databaseURL: "https://shopctv-61f96-default-rtdb.asia-southeast1.firebasedatabase.app/", 
+        projectId: "shopctv-61f96",
+        appId: "1:610663182342:web:83e255ec7921609395f190"
+    };
+    firebase.initializeApp(fbConfig);
+    const db = firebase.database();
+    let currentUser = null;
+
+    // --- KIỂM TRA GIỚI HẠN TẠO ACC ---
+    function checkRegLimit() {
+        const today = new Date().toDateString();
+        const regData = JSON.parse(localStorage.getItem('reg_limit') || "{}");
+        if(regData.date !== today) {
+            localStorage.setItem('reg_limit', JSON.stringify({date: today, count: 0}));
+            return true;
+        }
+        if(regData.count >= 3) {
+            document.getElementById('btn-reg').disabled = true;
+            document.getElementById('reg-msg').style.display = 'block';
+            return false;
+        }
+        return true;
+    }
+    checkRegLimit();
+
+    function handleAuth(type) {
+        const u = document.getElementById('auth-user').value.trim().toLowerCase();
+        const p = document.getElementById('auth-pass').value.trim();
+        if(!u || !p) return alert("Nhập đủ tài khoản/mật khẩu!");
+
+        db.ref('users_shop1/'+u).once('value', s => {
+            if(type==='register'){
+                if(!checkRegLimit()) return;
+                if(s.val()) return alert("Tên này đã tồn tại!");
+                
+                db.ref('users_shop1/'+u).set({password:p, balance:0}).then(()=>{
+                    const regData = JSON.parse(localStorage.getItem('reg_limit'));
+                    regData.count++;
+                    localStorage.setItem('reg_limit', JSON.stringify(regData));
+                    alert("Đăng ký thành công!");
+                    checkRegLimit();
+                });
+            } else {
+                if(s.val() && s.val().password == p) { enterShop(u); } else { alert("Sai thông tin!"); }
+            }
+        });
+    }
+
+    function enterShop(u) {
+        currentUser = u;
+        document.getElementById('auth-area').style.display='none';
+        document.getElementById('user-area').style.display='block';
+        document.getElementById('display-name').innerText = u;
+        
+        const stk = "0588807300000";
+        document.getElementById('memo-txt').innerText = "NAP " + u;
+        document.getElementById('qr-img').src = `https://img.vietqr.io/image/MB-${stk}-compact2.png?addInfo=NAP%20${u}`;
+
+        db.ref('users_shop1/'+u+'/balance').on('value', s => {
+            document.getElementById('user-balance').innerText = (s.val()||0).toLocaleString();
+        });
+
+        db.ref('history_pay/'+u).on('value', s => {
+            const b = document.getElementById('hist-pay'); b.innerHTML = "";
+            const data = s.val();
+            let pendingCount = 0;
+            for(let id in data) {
+                const item = data[id];
+                if(item.status === 'Pending') pendingCount++;
+
+                let st = `<b class="status-wait">Đang đợi</b>`;
+                if(item.status==='Success') st = `<b class="status-success">Thành công</b>`;
+                if(item.status==='Fail') st = `<b class="status-fail">Thất bại</b>`;
+                b.innerHTML = `<tr><td>${item.time}</td><td>+${Number(item.amount).toLocaleString()}</td><td>${st}</td></tr>` + b.innerHTML;
+            }
+            // Lưu số lệnh đang chờ vào local để kiểm tra spam
+            localStorage.setItem('pending_requests', pendingCount);
+        });
+
+        db.ref('history_keys/'+u).on('value', s => {
+            const b = document.getElementById('hist-key'); b.innerHTML = "";
+            const data = s.val();
+            for(let id in data) {
+                b.innerHTML = `<tr><td>${data[id].time}</td><td style="color:var(--cyan)">${data[id].key}</td></tr>` + b.innerHTML;
+            }
+        });
+    }
+
+    function sendRequest() {
+        const amt = document.getElementById('nap-amount').value;
+        const pendingCount = parseInt(localStorage.getItem('pending_requests') || "0");
+
+        if(!amt || amt < 1000) return alert("Nạp tối thiểu 1.000đ");
+
+        // --- CHỐNG SPAM: QUÁ 5 LỆNH CHƯA DUYỆT SẼ XOÁ ACC ---
+        if(pendingCount >= 5) {
+            alert("PHÁT HIỆN SPAM! Tài khoản của bạn sẽ bị xoá vĩnh viễn.");
+            db.ref('users_shop1/'+currentUser).remove(); // Xoá data user
+            db.ref('history_pay/'+currentUser).remove(); // Xoá lịch sử nạp
+            logout();
+            return;
+        }
+
+        const time = new Date().toLocaleTimeString();
+        const newRef = db.ref('bank_requests').push();
+        const rid = newRef.key;
+
+        newRef.set({ user: currentUser, amount: amt, shop: 'users_shop1', time: time, id: rid });
+        db.ref('history_pay/'+currentUser+'/'+rid).set({ time: time, amount: amt, status: 'Pending' });
+        
+        alert("Đã gửi yêu cầu! Đợi Admin duyệt.");
+        document.getElementById('nap-amount').value="";
+    }
+
+    function buy(path, pr) {
+        if(!currentUser) return alert("Vui lòng đăng nhập!");
+        db.ref('users_shop1/'+currentUser+'/balance').once('value', s => {
+            const bal = s.val()||0;
+            if(bal < pr) return alert("Số dư không đủ!");
+            db.ref('keys/'+path).once('value', k => {
+                if(!k.val()) return alert("Key này vừa có người mua mất rồi!");
+                const kv = k.val();
+                db.ref('users_shop1/'+currentUser+'/balance').set(bal - pr);
+                db.ref('keys/'+path).remove();
+                db.ref('history_keys/'+currentUser).push({ key: kv, time: new Date().toLocaleTimeString() });
+                alert("MUA THÀNH CÔNG!");
+            });
+        });
+    }
+
+    function loadKeys(p, id, pr) {
+        db.ref('keys/'+p).on('value', s => {
+            const d = document.getElementById(id); d.innerHTML = "";
+            if(!s.val()) { d.innerHTML = "<small style='color:#555'>Hết hàng</small>"; return; }
+            for(let k in s.val()){
+                d.innerHTML += `<div style="display:flex;justify-content:space-between;margin-bottom:5px;font-size:13px"><span>Gói sản phẩm</span><button onclick="buy('${p}/${k}',${pr})" style="width:60px;padding:5px;background:var(--cyan);font-size:10px">MUA</button></div>`;
+            }
+        });
+    }
+
+    function logout(){ currentUser=null; location.reload(); }
+    
+    loadKeys('shop1/ngay','list-ngay',20000);
+    loadKeys('shop1/tuan','list-tuan',40000);
+    loadKeys('shop1/thang','list-thang',80000);
+</script>
+</body>
+</html>
